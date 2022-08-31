@@ -11,6 +11,7 @@ PromptFormatter -- Utility for converting a Namespace of prompt parameters
 import os
 import re
 import piexif
+import piexif.helper
 from math import sqrt, floor, ceil
 from PIL import Image, PngImagePlugin
 
