@@ -319,7 +319,9 @@ class T2I:
                     results.append([image, seed])
                     if image_callback is not None:
                         image_callback(image, seed)
-                    seed = self._new_seed()
+                    # Set seed for sequential iterations to sequential values
+                    seed += 1
+                    # seed = self._new_seed()
 
                 if upscale is not None or gfpgan_strength > 0:
                     for result in results:
@@ -520,10 +522,7 @@ class T2I:
         return Image.fromarray(x_sample.astype(np.uint8))
 
     def _new_seed(self):
-        if self.seed is None or self.seed < 1:
-            self.seed = random.randrange(0, np.iinfo(np.uint32).max)
-        else:
-            self.seed = 1 + self.seed
+        self.seed = random.randrange(0, np.iinfo(np.uint32).max)
         return self.seed
 
     def _get_device(self):
