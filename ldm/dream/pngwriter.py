@@ -10,8 +10,11 @@ PromptFormatter -- Utility for converting a Namespace of prompt parameters
 """
 import os
 import re
+import piexif
 from math import sqrt, floor, ceil
 from PIL import Image, PngImagePlugin
+
+FORK_NAME="github.com/carbocation/stable-diffusion-lstein"
 
 # -------------------image generation utils-----
 
@@ -24,12 +27,12 @@ class PngWriter:
         self.files_written = []
         os.makedirs(outdir, exist_ok=True)
 
-    def write_image(self, image, seed, upscaled=False):
+    def write_image(self, image, seed, upscaled=False, steps=None, sampler_name=None, cfg_scale=None, infile=None):
         self.filepath = self.unique_filename(
             seed, upscaled, self.filepath
         )   # will increment name in some sensible way
         try:
-            prompt = f'{self.prompt} -S{seed}'
+            prompt = f"Program: {FORK_NAME}\nPrompt: {self.prompt}\nSampler: {sampler_name if sampler_name else 'NA'}\nSeed: {seed}\nSteps: {steps if steps else 'NA'}\nScale: {cfg_scale if cfg_scale else 'NA'}\nImg2Img File: {infile if infile else 'NA'}"
             self.save_image_and_prompt_to_png(image, prompt, self.filepath)
         except IOError as e:
             print(e)
@@ -69,9 +72,16 @@ class PngWriter:
             return os.path.join(self.outdir, filename)
 
     def save_image_and_prompt_to_png(self, image, prompt, path):
+        user_comment = piexif.helper.UserComment.dump(prompt, encoding="unicode")
+        exif_dict = {
+            "0th": {piexif.ImageIFD.Model: prompt},
+            "Exif": {piexif.ExifIFD.UserComment: user_comment},
+        }
+        exif_bytes = piexif.dump(exif_dict)
+
         info = PngImagePlugin.PngInfo()
         info.add_text('Dream', prompt)
-        image.save(path, 'PNG', pnginfo=info)
+        image.save(path, 'PNG', pnginfo=info, exif=exif_bytes)
 
     def make_grid(self, image_list, rows=None, cols=None):
         image_cnt = len(image_list)
