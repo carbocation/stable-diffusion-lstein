@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from ldm.dream.pngwriter import PngWriter
 from threading import Event
 
+FORK_NAME="github.com/carbocation/stable-diffusion-lstein"
+
 class CanceledException(Exception):
     pass
 
@@ -98,7 +100,9 @@ class DreamServer(BaseHTTPRequestHandler):
         # entry should not be inserted into the image list.
         def image_done(image, seed, upscaled=False):
             name = f'{prefix}.{seed}.png'
-            path = pngwriter.save_image_and_prompt_to_png(image, f'{prompt} -S{seed}', name)
+            newline_str="\n"
+            exif_text = f"Program: {FORK_NAME}\nPrompt: {prompt}\n{'Sampler: ' + sampler_name + newline_str if sampler_name else ''}Seed: {seed}\n{'Steps: ' + steps + newline_str if steps else ''}{'Scale: ' + cfgscale + newline_str if cfgscale else ''}{'Img2Img File: ' + initimg + newline_str if initimg else ''}"
+            path = pngwriter.save_image_and_prompt_to_png(image, f'{exif_text}', name)
 
             # Append post_data to log, but only once!
             if not upscaled:
