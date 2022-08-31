@@ -520,7 +520,10 @@ class T2I:
         return Image.fromarray(x_sample.astype(np.uint8))
 
     def _new_seed(self):
-        self.seed = random.randrange(0, np.iinfo(np.uint32).max)
+        if self.seed is None or self.seed < 1:
+            self.seed = random.randrange(0, np.iinfo(np.uint32).max)
+        else:
+            self.seed = 1 + self.seed
         return self.seed
 
     def _get_device(self):
