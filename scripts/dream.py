@@ -219,8 +219,7 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
                         filename = f'{prefix}.{seed}.postprocessed.png'
                     else:
                         filename = f'{prefix}.{seed}.png'
-                    newline_str="\n"
-                    exif_text = f"Program: {FORK_NAME}\nPrompt: {normalized_prompt}\n{'Sampler: ' + opt.sampler_name + newline_str if opt.sampler_name else ''}Seed: {seed}\n{'Steps: ' + opt.steps + newline_str if opt.steps else ''}{'Scale: ' + opt.cfg_scale + newline_str if opt.cfg_scale else ''}{'Img2Img File: ' + infile + newline_str if infile else ''}"
+                    exif_text = f"Program: {FORK_NAME}\nPrompt: {normalized_prompt}\nSampler: {opt.sampler_name if opt.sampler_name else ''}\nSeed: {seed}\nSteps: {opt.steps if opt.steps else ''}\nScale: {opt.cfg_scale if opt.cfg_scale else ''}\nImg2Img File: {infile if infile else ''}"
                     path = file_writer.save_image_and_prompt_to_png(image, f'{exif_text}', filename)
                     if (not upscaled) or opt.save_original:
                         # only append to results if we didn't overwrite an earlier output
