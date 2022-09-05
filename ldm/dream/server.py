@@ -85,6 +85,7 @@ class DreamServer(BaseHTTPRequestHandler):
         progress_images = 'progress_images' in post_data
         if post_data['seed'] == '':
             seed = None
+            self.model.seed = None
         else:
             seed = self.model.seed if int(post_data['seed']) == -1 else int(post_data['seed'])
 

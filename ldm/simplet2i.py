@@ -295,7 +295,7 @@ class T2I:
             assert all(0 <= weight <= 1 for _, weight in with_variations),\
                 f'variation weights must be in [0.0, 1.0]: got {[weight for _, weight in with_variations]}'
 
-        seed                  = seed       or self.seed
+        seed                  = seed       or self.seed or self._new_seed()
         width, height, _ = self._resolution_check(width, height, log=True)
 
         # TODO: - Check if this is still necessary to run on M1 devices.
