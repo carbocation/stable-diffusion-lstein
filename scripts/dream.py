@@ -13,6 +13,7 @@ import ldm.dream.readline
 from ldm.dream.pngwriter import PngWriter, PromptFormatter
 from ldm.dream.server import DreamServer, ThreadingDreamServer
 from ldm.dream.image_util import make_grid
+from omegaconf import OmegaConf
 
 FORK_NAME="github.com/carbocation/stable-diffusion-lstein"
 
@@ -20,21 +21,23 @@ def main():
     """Initialize command-line parsers and the diffusion model"""
     arg_parser = create_argv_parser()
     opt = arg_parser.parse_args()
+    
     if opt.laion400m:
-        # defaults suitable to the older latent diffusion weights
-        width = 256
-        height = 256
-        config = 'configs/latent-diffusion/txt2img-1p4B-eval.yaml'
-        weights = 'models/ldm/text2img-large/model.ckpt'
-    else:
-        # some defaults suitable for stable diffusion weights
-        width = 512
-        height = 512
-        config = 'configs/stable-diffusion/v1-inference.yaml'
-        if '.ckpt' in opt.weights:
-            weights = opt.weights
-        else:
-            weights = f'models/ldm/stable-diffusion-v1/{opt.weights}.ckpt'
+        print('--laion400m flag has been deprecated. Please use --model laion400m instead.')
+        sys.exit(-1)
+    if opt.weights != 'model':
+        print('--weights argument has been deprecated. Please configure ./configs/models.yaml, and call it using --model instead.')
+        sys.exit(-1)
+        
+    try:
+        models  = OmegaConf.load(opt.config)
+        width   = models[opt.model].width
+        height  = models[opt.model].height
+        config  = models[opt.model].config
+        weights = models[opt.model].weights
+    except (FileNotFoundError, IOError, KeyError) as e:
+        print(f'{e}. Aborting.')
+        sys.exit(-1)
 
     print('* Initializing, be patient...\n')
     sys.path.append('.')
@@ -62,7 +65,7 @@ def main():
         # this is solely for recreating the prompt
         latent_diffusion_weights=opt.laion400m,
         embedding_path=opt.embedding_path,
-        device=opt.device,
+        device_type=opt.device
     )
 
     # make sure the output directory exists
@@ -90,7 +93,7 @@ def main():
     tic = time.time()
     t2i.load_model()
     print(
-        f'model loaded in', '%4.2fs' % (time.time() - tic)
+        f'>> model loaded in', '%4.2fs' % (time.time() - tic)
     )
 
     if not infile:
@@ -100,7 +103,7 @@ def main():
 
     cmd_parser = create_cmd_parser()
     if opt.web:
-        dream_server_loop(t2i)
+        dream_server_loop(t2i, opt.host, opt.port)
     else:
         main_loop(t2i, opt.outdir, opt.prompt_as_dir, cmd_parser, infile)
 
@@ -182,9 +185,32 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
                 print(f'No previous seed at position {opt.seed} found')
                 opt.seed = None
 
-        normalized_prompt = PromptFormatter(t2i, opt).normalize_prompt()
         do_grid           = opt.grid or t2i.grid
-        individual_images = not do_grid
+
+        if opt.with_variations is not None:
+            # shotgun parsing, woo
+            parts = []
+            broken = False # python doesn't have labeled loops...
+            for part in opt.with_variations.split(','):
+                seed_and_weight = part.split(':')
+                if len(seed_and_weight) != 2:
+                    print(f'could not parse with_variation part "{part}"')
+                    broken = True
+                    break
+                try:
+                    seed = int(seed_and_weight[0])
+                    weight = float(seed_and_weight[1])
+                except ValueError:
+                    print(f'could not parse with_variation part "{part}"')
+                    broken = True
+                    break
+                parts.append([seed, weight])
+            if broken:
+                continue
+            if len(parts) > 0:
+                opt.with_variations = parts
+            else:
+                opt.with_variations = None
 
         if opt.outdir:
             if not os.path.exists(opt.outdir):
@@ -212,7 +238,7 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
             file_writer = PngWriter(current_outdir)
             prefix = file_writer.unique_prefix()
             seeds = set()
-            results = []
+            results = [] # list of filename, prompt pairs
             grid_images = dict() # seed -> Image, only used if `do_grid`
             def image_writer(image, seed, upscaled=False):
                 if do_grid:
@@ -222,11 +248,30 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
                         filename = f'{prefix}.{seed}.postprocessed.png'
                     else:
                         filename = f'{prefix}.{seed}.png'
+
+                    if opt.variation_amount > 0:
+                        iter_opt = argparse.Namespace(**vars(opt)) # copy
+                        this_variation = [[seed, opt.variation_amount]]
+                        if opt.with_variations is None:
+                            iter_opt.with_variations = this_variation
+                        else:
+                            iter_opt.with_variations = opt.with_variations + this_variation
+                        iter_opt.variation_amount = 0
+                        normalized_prompt = PromptFormatter(t2i, iter_opt).normalize_prompt()
+                        metadata_prompt = f'{normalized_prompt} -S{iter_opt.seed}'
+                    elif opt.with_variations is not None:
+                        normalized_prompt = PromptFormatter(t2i, opt).normalize_prompt()
+                        metadata_prompt = f'{normalized_prompt} -S{opt.seed}' # use the original seed - the per-iteration value is the last variation-seed
+                    else:
+                        normalized_prompt = PromptFormatter(t2i, opt).normalize_prompt()
+                        metadata_prompt = f'{normalized_prompt} -S{seed}'
+                    
                     exif_text = f"Program: {FORK_NAME}\nPrompt: {normalized_prompt}\nSampler: {opt.sampler_name if opt.sampler_name else ''}\nSeed: {seed}\nSteps: {opt.steps if opt.steps else ''}\nScale: {opt.cfg_scale if opt.cfg_scale else ''}\nImg2Img File: {infile if infile else ''}\nImg2Img Strength: {opt.strength if opt.strength else ''}"
                     path = file_writer.save_image_and_prompt_to_png(image, f'{exif_text}', filename)
+
                     if (not upscaled) or opt.save_original:
                         # only append to results if we didn't overwrite an earlier output
-                        results.append([path, seed])
+                        results.append([path, metadata_prompt])
 
                 seeds.add(seed)
 
@@ -237,11 +282,12 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
                 first_seed = next(iter(seeds))
                 filename = f'{prefix}.{first_seed}.png'
                 # TODO better metadata for grid images
-                metadata_prompt = f'{normalized_prompt} -S{first_seed}'
+                normalized_prompt = PromptFormatter(t2i, opt).normalize_prompt()
+                metadata_prompt = f'{normalized_prompt} -S{first_seed} --grid -N{len(grid_images)}'
                 path = file_writer.save_image_and_prompt_to_png(
                     grid_img, metadata_prompt, filename
                 )
-                results = [[path, seeds]]
+                results = [[path, metadata_prompt]]
 
             last_seeds = list(seeds)
 
@@ -255,7 +301,7 @@ def main_loop(t2i, outdir, prompt_as_dir, parser, infile):
 
         print('Outputs:')
         log_path = os.path.join(current_outdir, 'dream_log.txt')
-        write_log_message(normalized_prompt, results, log_path)
+        write_log_message(results, log_path)
 
     print('goodbye!')
 
@@ -272,7 +318,7 @@ def get_next_command(infile=None) -> str: #command string
         print(f'#{command}')
     return command
 
-def dream_server_loop(t2i):
+def dream_server_loop(t2i, host, port):
     print('\n* --web was specified, starting web server...')
     # Change working directory to the stable-diffusion directory
     os.chdir(
@@ -281,9 +327,13 @@ def dream_server_loop(t2i):
 
     # Start server
     DreamServer.model = t2i
-    dream_server = ThreadingDreamServer(("0.0.0.0", 9090))
-    print("\nStarted Stable Diffusion dream server!")
-    print("Point your browser at http://localhost:9090 or use the host's DNS name or IP address.")
+    dream_server = ThreadingDreamServer((host, port))
+    print(">> Started Stable Diffusion dream server!")
+    if host == '0.0.0.0':
+        print(f"Point your browser at http://localhost:{port} or use the host's DNS name or IP address.")
+    else:
+        print(">> Default host address now 127.0.0.1 (localhost). Use --host 0.0.0.0 to bind any address.")
+        print(f">> Point your browser at http://{host}:{port}.")
 
     try:
         dream_server.serve_forever()
@@ -293,9 +343,9 @@ def dream_server_loop(t2i):
     dream_server.server_close()
 
 
-def write_log_message(prompt, results, log_path):
+def write_log_message(results, log_path):
     """logs the name of the output image, prompt, and prompt args to the terminal and log file"""
-    log_lines = [f'{r[0]}: {prompt} -S{r[1]}\n' for r in results]
+    log_lines = [f'{path}: {prompt}\n' for path, prompt in results]
     print(*log_lines, sep='')
 
     with open(log_path, 'a', encoding='utf-8') as file:
@@ -349,7 +399,7 @@ def create_argv_parser():
         '--full_precision',
         dest='full_precision',
         action='store_true',
-        help='Use slower full precision math for calculations',
+        help='Use more memory-intensive full precision math for calculations',
     )
     parser.add_argument(
         '-g',
@@ -378,13 +428,6 @@ def create_argv_parser():
         '--embedding_path',
         type=str,
         help='Path to a pre-trained embedding manager checkpoint - can only be set on command line',
-    )
-    parser.add_argument(
-        '--device',
-        '-d',
-        type=str,
-        default='cuda',
-        help='Device to run Stable Diffusion on. Defaults to cuda `torch.cuda.current_device()` if avalible',
     )
     parser.add_argument(
         '--prompt_as_dir',
@@ -425,9 +468,38 @@ def create_argv_parser():
         help='Start in web server mode.',
     )
     parser.add_argument(
+        '--host',
+        type=str,
+        default='127.0.0.1',
+        help='Web server: Host or IP to listen on. Set to 0.0.0.0 to accept traffic from other devices on your network.'
+    )
+    parser.add_argument(
+        '--port',
+        type=int,
+        default='9090',
+        help='Web server: Port to listen on'
+    )
+    parser.add_argument(
         '--weights',
         default='model',
         help='Indicates the Stable Diffusion model to use.',
+    )
+    parser.add_argument(
+        '--device',
+        '-d',
+        type=str,
+        default='cuda',
+        help="device to run stable diffusion on. defaults to cuda `torch.cuda.current_device()` if available"
+    )
+    parser.add_argument(
+        '--model',
+        default='stable-diffusion-1.4',
+        help='Indicates which diffusion model to load. (currently "stable-diffusion-1.4" (default) or "laion400m")',
+    )
+    parser.add_argument(
+        '--config',
+        default ='configs/models.yaml',
+        help    ='Path to configuration file for alternate models.',
     )
     return parser
 
@@ -487,6 +559,13 @@ def create_cmd_parser():
         help='Path to input image for img2img mode (supersedes width and height)',
     )
     parser.add_argument(
+        '-T',
+        '-fit',
+        '--fit',
+        action='store_true',
+        help='If specified, will resize the input image to fit within the dimensions of width x height (512x512 default)',
+    )
+    parser.add_argument(
         '-f',
         '--strength',
         default=0.75,
@@ -538,6 +617,20 @@ def create_cmd_parser():
         '--log_tokenization',
         action='store_true',
         help='shows how the prompt is split into tokens'
+    )
+    parser.add_argument(
+        '-v',
+        '--variation_amount',
+        default=0.0,
+        type=float,
+        help='If > 0, generates variations on the initial seed instead of random seeds per iteration. Must be between 0 and 1. Higher values will be more different.'
+    )
+    parser.add_argument(
+        '-V',
+        '--with_variations',
+        default=None,
+        type=str,
+        help='list of variations to apply, in the format `seed:weight,seed:weight,...'
     )
     return parser
 
