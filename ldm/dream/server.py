@@ -39,6 +39,9 @@ class DreamServer(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(bytes('{}', 'utf8'))
         else:
+            # Split out the query string and ignore it
+            self.path = self.path.split('?')[0]
+
             path = "." + self.path
             cwd = os.path.realpath(os.getcwd())
             is_in_cwd = os.path.commonprefix((os.path.realpath(path), cwd)) == cwd
@@ -135,6 +138,12 @@ class DreamServer(BaseHTTPRequestHandler):
                     x = images_upscaled+1
                     self.wfile.write(bytes(json.dumps(
                         {'event':action,'processed_file_cnt':f'{x}/{iterations}'}
+                    ) + '\n',"utf-8"))
+                if action == 'upscaling-done':
+                    # Send the upscaled image over the wire with a query ID to
+                    # break caching.
+                    self.wfile.write(bytes(json.dumps(
+                        {'event': 'result', 'url': f'{path}?id=upscaled', 'seed': seed, 'config': config}
                     ) + '\n',"utf-8"))
 
         step_writer = PngWriter('./outputs/intermediates/')
